@@ -43,15 +43,22 @@ defmodule Logger.Backend.Logentries do
   end
 
   def open_connection_and_log_event(%{connection: connection} = state, level, msg, ts, md, _retry) when not is_nil(connection) do
-    log_event(level, msg, ts, md, state)
+    case log_event(level, msg, ts, md, state) do
+      {:error, reason} when reason in [:enotconn, :closed] ->
+        IO.puts "Logger error: #{inspect reason}, retrying"
+        open_connection(state) |> open_connection_and_log_event(level, msg, ts, md, false)
+      :ok ->
+        state
+    end
   end
 
   def open_connection_and_log_event(%{connection: connection} = state, level, msg, ts, md, retry) when is_nil(connection) and retry == true do
+    Process.sleep(1000) # Add a sleep here just to prevent a network ban due to too many reconnects at once
     open_connection(state) |> open_connection_and_log_event(level, msg, ts, md, false)
   end
 
   def open_connection_and_log_event(%{connection: connection} = state, _level, _msg, _ts, _md, retry) when is_nil(connection) and retry == false do
-    Logger.error("connection to logentries is not open")
+    IO.puts "connection to logentries is not open"
     state
   end
 
@@ -59,7 +66,6 @@ defmodule Logger.Backend.Logentries do
     msg = maybe_replace_newlines(msg)
     log_entry = format_event(level, "#{token} #{msg}", ts, md, state)
     connector.transmit(connection, log_entry)
-    state
   end
 
   defp maybe_replace_newlines(msg) when is_binary(msg) do
@@ -137,9 +143,10 @@ defmodule Logger.Backend.Logentries do
   def open_connection(%{connector: connector, host: host, port: port} = state) do
     case connector.open(host, port) do
       {:ok, connection} ->
+        IO.puts "logentries connected"
         %{state | connection: connection}
       {:error, reason} ->
-        Logger.error("error opening logentries connection: #{inspect reason}")
+        IO.puts "error opening logentries connection: #{inspect reason}"
         %{state | connection: nil}
     end
   end
